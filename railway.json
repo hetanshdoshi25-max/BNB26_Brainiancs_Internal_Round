@@ -4,8 +4,7 @@
     "buildCommand": "npm run build"
   },
   "deploy": {
-    "preDeployCommand": ["npm --workspace @fair-drop/api run db:deploy"],
-    "startCommand": "npm start",
+    "startCommand": "npm --workspace @fair-drop/api run db:deploy && npm start",
     "healthcheckPath": "/api/health",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE"
