@@ -172,7 +172,12 @@ app.post("/api/drops/:dropId/entries", requireUser, asyncRoute(async (req, res) 
   const score = humanScore(req.body?.signals);
   try {
     const result = await prisma.$transaction(async (tx) => {
-      await lockDrop(tx, req.params.dropId);
+      // A shared lock lets joins for the same drop run concurrently, while the draw's
+      // exclusive lock still waits for in-flight joins before freezing the eligible list.
+      // Duplicate joins are prevented by the (dropId, userId) unique index (P2002 below).
+      // Read committed is enough: the share lock pins the drop's status, and serializable
+      // isolation would abort concurrent inserts into the same index range under load.
+      await shareDrop(tx, req.params.dropId);
       const drop = await tx.drop.findUnique({ where: { id: req.params.dropId } });
       if (!drop) return { kind: "missing" as const };
       const now = new Date();
@@ -180,7 +185,7 @@ app.post("/api/drops/:dropId/entries", requireUser, asyncRoute(async (req, res) 
       const prior = await tx.entry.findUnique({ where: { dropId_userId: { dropId: drop.id, userId } } });
       if (prior) return { kind: "existing" as const, entry: prior };
       return { kind: "created" as const, entry: await tx.entry.create({ data: { dropId: drop.id, userId, humanScore: score } }) };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     recordJoinAttempt(currentDrop.id, userId, result.kind === "created" || result.kind === "existing" ? "accepted" : "rejected");
     if (result.kind === "missing") return res.status(404).json({ error: "Drop not found." });
     if (result.kind === "closed") return res.status(409).json({ error: "The entry window is closed." });
@@ -206,6 +211,8 @@ async function shareDrop(tx: Prisma.TransactionClient, dropId: string) {
 
 async function closeDrop(dropId: string) {
   return prisma.$transaction(async (tx) => {
+    // Read committed (set below) matters here: under serializable the snapshot is taken at this
+    // first statement, before the lock wait, so joins that commit while we wait would be missed.
     await lockDrop(tx, dropId);
     const drop = await tx.drop.findUnique({ where: { id: dropId } });
     if (!drop) return null;
@@ -241,7 +248,7 @@ async function closeDrop(dropId: string) {
       where: { id: dropId },
       data: { status: "CLOSED", closesAt: completedAt, drawCompletedAt: completedAt, ...(fallback ? { drawSeed: fallback.seed, drawSeedHash: fallback.seedHash } : {}) },
     });
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 120_000 });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 10_000, timeout: 120_000 });
 }
 
 async function promoteWaitlist(dropId: string) {
@@ -254,14 +261,19 @@ async function promoteWaitlist(dropId: string) {
       where: { dropId, status: "RESERVED", reservationExpiresAt: { lte: now } },
       data: { status: "EXPIRED", reservationExpiresAt: null },
     });
-    const next = await tx.entry.findFirst({ where: { dropId, status: "WAITLISTED" }, orderBy: { rank: "asc" } });
-    if (next) {
-      await tx.entry.updateMany({
-        where: { id: next.id, status: "WAITLISTED" },
-        data: { status: "RESERVED", reservationExpiresAt: new Date(now.getTime() + drop.reservationMinutes * 60_000) },
-      });
+    // Refill every free seat, not just one: several holds can expire in the same tick.
+    const held = await tx.entry.count({ where: { dropId, status: { in: ["RESERVED", "CONFIRMED"] } } });
+    const freeSeats = drop.capacity - held;
+    if (freeSeats > 0) {
+      const next = await tx.entry.findMany({ where: { dropId, status: "WAITLISTED" }, orderBy: { rank: "asc" }, take: freeSeats, select: { id: true } });
+      if (next.length) {
+        await tx.entry.updateMany({
+          where: { id: { in: next.map((entry) => entry.id) }, status: "WAITLISTED" },
+          data: { status: "RESERVED", reservationExpiresAt: new Date(now.getTime() + drop.reservationMinutes * 60_000) },
+        });
+      }
     }
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
 
 const createDropSchema = z.object({
