@@ -2,6 +2,7 @@ import http from "k6/http";
 import { SharedArray } from "k6/data";
 import { check, sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
+import crypto from "k6/crypto";
 
 const baseUrl = (__ENV.BASE_URL || "http://localhost:4000").replace(/\/$/, "");
 const dropId = __ENV.DROP_ID;
@@ -18,6 +19,35 @@ const throttled = new Counter("entry_requests_throttled");
 const rejected = new Counter("entry_requests_rejected");
 const entrySuccess = new Rate("entry_attempt_success_rate");
 const apiLatency = new Trend("booking_api_latency", true);
+const powSolveTime = new Trend("pow_solve_time", true);
+const powHashes = new Counter("pow_hashes_computed");
+
+// Protected drops require a proof-of-work answer on every entry request, so a script pays
+// the same CPU cost per attempt as a browser. Baseline drops (limits off) need none.
+let powRequired = null;
+function leadingZeroBits(hex) {
+  let bits = 0;
+  for (const char of hex) {
+    const nibble = parseInt(char, 16);
+    if (nibble === 0) { bits += 4; continue; }
+    return bits + Math.clz32(nibble) - 28;
+  }
+  return bits;
+}
+function solvePow() {
+  if (powRequired === false) return undefined;
+  const response = http.get(`${baseUrl}/api/pow/challenge?action=join&dropId=${dropId}`, { tags: { action: "pow-challenge" } });
+  const challenge = response.json();
+  powRequired = !!challenge.required;
+  if (!challenge.required) return undefined;
+  const id = challenge.token.split(".")[1];
+  const started = Date.now();
+  let nonce = 0;
+  while (leadingZeroBits(crypto.sha256(`${id}:${nonce}`, "hex")) < challenge.difficulty) nonce++;
+  powSolveTime.add(Date.now() - started);
+  powHashes.add(nonce + 1);
+  return { token: challenge.token, signature: challenge.signature, nonce: String(nonce) };
+}
 
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409, 429));
 
@@ -75,7 +105,7 @@ function authenticate(account) {
 function request(path, action, method = "POST") {
   const response = method === "GET"
     ? http.get(`${baseUrl}${path}`, { tags: { action } })
-    : http.post(`${baseUrl}${path}`, "{}", { headers: { "Content-Type": "application/json" }, tags: { action } });
+    : http.post(`${baseUrl}${path}`, JSON.stringify({ pow: solvePow() }), { headers: { "Content-Type": "application/json" }, tags: { action } });
   apiLatency.add(response.timings.duration, { action });
   if (response.status === 200 || response.status === 201) accepted.add(1, { action });
   else if (response.status === 429) throttled.add(1, { action });
@@ -123,6 +153,8 @@ function textSummary(file, metrics) {
     ["Throttled (429)", metrics.throttled.toLocaleString()],
     ["Rejected", metrics.rejected.toLocaleString()],
     ["Entry success rate", pct(metrics.joinSuccessRate)],
+    ["Proof-of-work solve p95", metrics.powSolveP95Ms ? `${metrics.powSolveP95Ms.toFixed(0)} ms` : "not required"],
+    ["Hashes computed by bots", metrics.powHashes.toLocaleString()],
   ];
   const width = Math.max(...rows.map(([label]) => label.length));
   const line = "─".repeat(width + 40);
@@ -144,6 +176,8 @@ export function handleSummary(data) {
     throttled: data.metrics.entry_requests_throttled?.values?.count ?? 0,
     rejected: data.metrics.entry_requests_rejected?.values?.count ?? 0,
     joinSuccessRate: data.metrics.entry_attempt_success_rate?.values?.rate ?? 0,
+    powSolveP95Ms: data.metrics.pow_solve_time?.values?.["p(95)"] ?? 0,
+    powHashes: data.metrics.pow_hashes_computed?.values?.count ?? 0,
   };
   return {
     stdout: textSummary(file, metrics),
