@@ -1,0 +1,126 @@
+import http from "k6/http";
+import { SharedArray } from "k6/data";
+import { check, sleep } from "k6";
+import { Counter, Rate, Trend } from "k6/metrics";
+
+const baseUrl = (__ENV.BASE_URL || "http://localhost:4000").replace(/\/$/, "");
+const dropId = __ENV.DROP_ID;
+const scenario = __ENV.SCENARIO || "baseline";
+const users = Math.max(1, Math.min(2000, Number(__ENV.VUS || 24)));
+const maxActiveVus = scenario === "burst" ? Math.min(2000, users * 2) : users;
+const duration = __ENV.DURATION || "30s";
+const accountsFile = __ENV.ACCOUNTS_FILE || "tests/load/accounts.local.json";
+const accounts = new SharedArray("fair-drop-test-accounts", () => JSON.parse(open(accountsFile)));
+
+const accepted = new Counter("entry_requests_accepted_or_replayed");
+const throttled = new Counter("entry_requests_throttled");
+const rejected = new Counter("entry_requests_rejected");
+const entrySuccess = new Rate("entry_attempt_success_rate");
+const apiLatency = new Trend("booking_api_latency", true);
+
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 399 }, 409, 429));
+
+function rampingVus() {
+  return {
+    executor: "ramping-vus",
+    startVUs: 1,
+    stages: [{ duration: "5s", target: users }, { duration, target: users }, { duration: "2s", target: 0 }],
+    gracefulRampDown: "2s",
+  };
+}
+
+const definitions = {
+  baseline: rampingVus(),
+  repeat: rampingVus(),
+  burst: {
+    executor: "ramping-arrival-rate", startRate: 0, timeUnit: "1s",
+    preAllocatedVUs: users, maxVUs: Math.min(2000, users * 2),
+    stages: [{ duration: "2s", target: users }, { duration, target: users }, { duration: "2s", target: 0 }],
+  },
+  mixed: rampingVus(),
+  recovery: rampingVus(),
+};
+
+export const options = {
+  scenarios: { [Object.prototype.hasOwnProperty.call(definitions, scenario) ? scenario : "baseline"]: definitions[scenario] || definitions.baseline },
+  thresholds: { entry_attempt_success_rate: ["rate>0"] },
+  summaryTrendStats: ["avg", "med", "p(90)", "p(95)", "max"],
+};
+
+export function setup() {
+  if (!dropId) throw new Error("Set DROP_ID to a drop in your test deployment.");
+  const requiredAccounts = maxActiveVus;
+  if (accounts.length < requiredAccounts) throw new Error(`The account file has ${accounts.length} accounts; this scenario needs at least ${requiredAccounts} to give active virtual users separate accounts.`);
+}
+
+function selectAccount() {
+  const repeatsSameAccount = scenario === "repeat" || scenario === "recovery" || (scenario === "mixed" && __VU % 5 === 0);
+  const index = repeatsSameAccount ? __VU - 1 : (__VU - 1 + __ITER * maxActiveVus) % accounts.length;
+  return accounts[index % accounts.length];
+}
+
+function authenticate(account) {
+  const jar = http.cookieJar();
+  if (account.sessionToken) {
+    jar.set(baseUrl, "fairdrop_session", account.sessionToken, { path: "/", http_only: true });
+    return;
+  }
+  const response = http.post(`${baseUrl}/api/auth/login`, JSON.stringify({ email: account.email, password: account.password }), {
+    headers: { "Content-Type": "application/json" }, tags: { action: "login" },
+  });
+  check(response, { "account signed in": (res) => res.status === 200 });
+}
+
+function request(path, action, method = "POST") {
+  const response = method === "GET"
+    ? http.get(`${baseUrl}${path}`, { tags: { action } })
+    : http.post(`${baseUrl}${path}`, "{}", { headers: { "Content-Type": "application/json" }, tags: { action } });
+  apiLatency.add(response.timings.duration, { action });
+  if (response.status === 200 || response.status === 201) accepted.add(1, { action });
+  else if (response.status === 429) throttled.add(1, { action });
+  else rejected.add(1, { action, status: String(response.status) });
+  return response;
+}
+
+function enterAndObserve() {
+  const response = request(`/api/drops/${dropId}/entries`, "join");
+  const ok = response.status === 200 || response.status === 201;
+  entrySuccess.add(ok);
+  check(response, { "join was saved or safely replayed": (res) => res.status === 200 || res.status === 201 || res.status === 409 || res.status === 429 });
+  request(`/api/drops/${dropId}/my-entry`, "status", "GET");
+}
+
+export default function () {
+  const account = selectAccount();
+  authenticate(account);
+  if (scenario === "repeat") {
+    if (__ITER === 0) enterAndObserve();
+    for (let attempt = 0; attempt < 8; attempt++) request(`/api/drops/${dropId}/entries`, "repeat");
+    request(`/api/drops/${dropId}/my-entry`, "status", "GET");
+  } else if (scenario === "mixed" && __VU % 5 === 0) {
+    for (let attempt = 0; attempt < 5; attempt++) request(`/api/drops/${dropId}/entries`, "repeat");
+  } else if (scenario === "recovery") {
+    enterAndObserve();
+    request(`/api/drops/${dropId}/my-entry`, "reconnect", "GET");
+    request(`/api/drops/${dropId}/entries`, "retry");
+  } else {
+    enterAndObserve();
+  }
+  sleep(scenario === "baseline" ? 0.8 + Math.random() : 0.25);
+}
+
+export function handleSummary(data) {
+  return { [`tests/load/results-${scenario}-${dropId}.json`]: JSON.stringify({
+    scenario, dropId, generatedAt: new Date().toISOString(), vus: users, duration,
+    metrics: {
+      requests: data.metrics.http_reqs?.values?.count ?? 0,
+      throughputPerSecond: data.metrics.http_reqs?.values?.rate ?? 0,
+      latencyP95Ms: data.metrics.http_req_duration?.values?.["p(95)"] ?? 0,
+      requestFailureRate: data.metrics.http_req_failed?.values?.rate ?? 0,
+      acceptedOrReplayed: data.metrics.entry_requests_accepted_or_replayed?.values?.count ?? 0,
+      throttled: data.metrics.entry_requests_throttled?.values?.count ?? 0,
+      rejected: data.metrics.entry_requests_rejected?.values?.count ?? 0,
+      joinSuccessRate: data.metrics.entry_attempt_success_rate?.values?.rate ?? 0,
+    },
+  }, null, 2) };
+}
