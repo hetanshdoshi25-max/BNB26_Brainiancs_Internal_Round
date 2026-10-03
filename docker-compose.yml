@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fairdrop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: fairdrop
+      POSTGRES_USER: fairdrop
+      POSTGRES_PASSWORD: fairdrop_dev
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - fairdrop-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fairdrop -d fairdrop"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    container_name: fairdrop-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - fairdrop-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  fairdrop-postgres:
+  fairdrop-redis:

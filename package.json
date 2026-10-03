@@ -1,0 +1,32 @@
+{
+  "name": "fair-drop",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --workspace @fair-drop/api run dev",
+    "dev:web": "npm --workspace @fair-drop/web run dev",
+    "build": "npm --workspace @fair-drop/api run build && npm --workspace @fair-drop/web run build",
+    "db:generate": "npm --workspace @fair-drop/api run db:generate",
+    "db:migrate": "npm --workspace @fair-drop/api run db:migrate",
+    "db:seed": "npm --workspace @fair-drop/api run db:seed",
+    "start": "npm --workspace @fair-drop/api run start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "allowScripts": {
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.28.2": true,
+    "esbuild@0.25.12": true,
+    "prisma@6.19.3": true
+  },
+  "overrides": {
+    "@types/three": "0.170.0"
+  }
+}
