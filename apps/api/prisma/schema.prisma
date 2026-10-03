@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PARTICIPANT
+  ORGANIZER
+}
+
+enum DropStatus {
+  DRAFT
+  OPEN
+  CLOSED
+}
+
+enum AllocationPolicy {
+  FIRST_COME
+  RANDOM_DRAW
+}
+
+enum EntryStatus {
+  ENTERED
+  RESERVED
+  WAITLISTED
+  CONFIRMED
+  EXPIRED
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  role         Role      @default(PARTICIPANT)
+  createdAt    DateTime  @default(now())
+  sessions     Session[]
+  entries      Entry[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+}
+
+model Drop {
+  id                 String     @id @default(cuid())
+  title              String
+  description        String     @default("")
+  venue              String     @default("Online")
+  eventDate          DateTime
+  capacity           Int
+  allocationPolicy   AllocationPolicy @default(RANDOM_DRAW)
+  limitsEnabled      Boolean          @default(true)
+  status             DropStatus @default(DRAFT)
+  opensAt            DateTime?
+  closesAt           DateTime?
+  reservationMinutes Int        @default(10)
+  drawCompletedAt    DateTime?
+  createdAt          DateTime   @default(now())
+  entries            Entry[]
+
+  @@index([status, closesAt])
+}
+
+model Entry {
+  id                   String      @id @default(cuid())
+  dropId               String
+  userId               String
+  arrivalSequence     Int         @unique @default(autoincrement())
+  status               EntryStatus @default(ENTERED)
+  rank                 Int?
+  enteredAt            DateTime    @default(now())
+  reservationExpiresAt DateTime?
+  confirmedAt          DateTime?
+  ticketCode           String?     @unique
+  drop                 Drop        @relation(fields: [dropId], references: [id], onDelete: Cascade)
+  user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([dropId, userId])
+  @@unique([dropId, rank])
+  @@index([dropId, status, rank])
+  @@index([dropId, status, arrivalSequence])
+  @@index([status, reservationExpiresAt])
+}
