@@ -1,11 +1,12 @@
 import { lazy, useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
-  Activity, ArrowDownRight, ArrowRight, Ban, Check, ChevronDown, CircleHelp, FlaskConical, Layers,
+  Activity, ArrowDownRight, ArrowRight, Ban, Check, ChevronDown, CircleHelp, Fingerprint, FlaskConical, Layers,
   LockKeyhole, Plus, Radio, ShieldCheck, Ticket, TicketCheck, Users, X,
 } from "lucide-react";
 import { api, formatDate, localDateTimeValue, statusLabel, totalOf, type Drop, type Metrics, type OrganizerEntry, type Overview } from "../lib/api";
 import { CountUp, Reveal, Ring, SceneBoundary } from "../components/fx";
+import { FairnessAudit } from "../components/FairnessAudit";
 
 const SeatArena = lazy(() => import("../three/SeatArena"));
 
@@ -153,6 +154,11 @@ export function OrganizerDashboard() {
             <div className="selected-drop-top"><span className={`status-pill status-${active.status.toLowerCase()}`}>{statusLabel(active.status)}</span><span>{formatDate(active.eventDate)}</span></div>
             <small>{active.venue}</small>
             <div className="chip-row"><span className="chip">{active.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</span><span className={`chip ${active.limitsEnabled ? "chip-on" : "chip-off"}`}>Limits {active.limitsEnabled ? "on" : "off"}</span><span className="chip">{active.reservationMinutes} min hold</span></div>
+            {active.allocationPolicy === "RANDOM_DRAW" && <div className="commitment-row">
+              <Fingerprint size={14} />
+              <span>{active.drawSeedHash ? <>Draw sealed · <code title={active.drawSeedHash}>{active.drawSeedHash.slice(0, 10)}…{active.drawSeedHash.slice(-6)}</code></> : "Seed is committed when entry opens"}</span>
+              {active.drawSeedHash && <Link to={`/verify/${active.id}`} className="text-link">{active.status === "CLOSED" ? "Verify" : "Audit"} <ArrowRight size={13} /></Link>}
+            </div>}
           </div> : <div className="select-empty">Create a drop to see its controls.</div>}
           <div className="control-actions">
             {active?.status === "DRAFT" && <button className="button button-primary" disabled={busy} onClick={() => void transition("open")}><Radio size={15} /> Open entry · 30 min</button>}
@@ -177,6 +183,8 @@ export function OrganizerDashboard() {
         </div>
       </div>
     </section>
+
+    {active && <FairnessAudit dropId={active.id} />}
 
     <section className="table-panel glass">
       <div className="dash-section-head"><div><span className="section-kicker">THE ENTRY LIST</span><h2>Participants by draw rank</h2></div><span className="table-count">{total.toLocaleString()} total</span></div>
