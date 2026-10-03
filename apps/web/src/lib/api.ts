@@ -4,6 +4,7 @@ export type Drop = {
   capacity: number; allocationPolicy: "FIRST_COME" | "RANDOM_DRAW"; limitsEnabled: boolean;
   status: "DRAFT" | "OPEN" | "CLOSED"; opensAt: string | null;
   closesAt: string | null; reservationMinutes: number; drawCompletedAt: string | null;
+  drawSeedHash?: string | null; drawCommittedAt?: string | null;
 };
 export type Entry = {
   id: string; status: "ENTERED" | "RESERVED" | "WAITLISTED" | "CONFIRMED" | "EXPIRED";
@@ -13,6 +14,16 @@ export type Entry = {
 export type Metrics = { entered: number; reserved: number; waitlisted: number; confirmed: number; expired: number };
 export type Overview = { drops: number; accounts: number; entries: number; confirmed: number; throttled: number };
 export type OrganizerEntry = { id: string; status: Entry["status"]; rank: number | null; enteredAt: string; user: { email: string; name: string } };
+export type FairnessBucket = { label: string; detail: string; entrants: number; winners: number; winRate: number | null };
+export type Difficulty = { bits: number; requestsPerSecond: number };
+export type FairnessReport = {
+  dropId: string; policy: Drop["allocationPolicy"]; status: Drop["status"]; capacity: number; entrants: number; drawn: boolean;
+  correlation: number | null; overallRate: number | null; earlyBirdAdvantage: number | null;
+  lowSignal: { entrants: number; entrantShare: number; seatShare: number | null };
+  buckets: { arrival: FairnessBucket[]; volume: FairnessBucket[]; human: FairnessBucket[] };
+  pow: { enabled: boolean; join: Difficulty; register: Difficulty };
+};
+export type TrafficPoint = { t: number; accepted: number; throttled: number; rejected: number };
 type ApiError = Error & { status?: number };
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -63,4 +74,21 @@ export function statusLabel(status: Drop["status"] | Entry["status"]) {
 }
 export function totalOf(metrics: Metrics | null) {
   return metrics ? metrics.entered + metrics.reserved + metrics.waitlisted + metrics.confirmed + metrics.expired : 0;
+}
+
+/** Enters a drop: solves the proof-of-work puzzle when the drop requires one and attaches
+ *  aggregate interaction signals. Retries once if the puzzle expired or was reused. */
+export async function joinDrop(dropId: string, onStage?: (stage: "verifying" | "saving") => void) {
+  const [{ solvePow }, { getSignals }] = await Promise.all([import("./pow"), import("./humanSignals")]);
+  for (let attempt = 0; ; attempt++) {
+    onStage?.("verifying");
+    const pow = await solvePow("join", dropId);
+    onStage?.("saving");
+    try {
+      return await api<{ entry: Entry; existing: boolean }>(`/api/drops/${dropId}/entries`, { method: "POST", body: JSON.stringify({ pow: pow?.proof, signals: getSignals() }) });
+    } catch (error) {
+      if ((error as ApiError).status === 428 && attempt === 0) continue;
+      throw error;
+    }
+  }
 }

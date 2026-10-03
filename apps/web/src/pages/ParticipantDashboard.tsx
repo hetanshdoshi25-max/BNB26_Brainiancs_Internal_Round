@@ -1,7 +1,7 @@
 import { lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BellRing, Check, Clock3, Compass, Dices, Hourglass, LockKeyhole, ShieldCheck, Ticket, TicketCheck, Trophy, X, Zap } from "lucide-react";
-import { api, formatDate, formatRemaining, loadDropsWithEntries, statusLabel, type Drop, type Entry, type User } from "../lib/api";
+import { ArrowRight, BellRing, Check, Clock3, Compass, Dices, Fingerprint, Hourglass, LockKeyhole, ShieldCheck, Ticket, TicketCheck, Trophy, X, Zap } from "lucide-react";
+import { api, formatDate, formatRemaining, joinDrop, loadDropsWithEntries, statusLabel, type Drop, type Entry, type User } from "../lib/api";
 import { CountUp, Reveal, Ring, SceneBoundary } from "../components/fx";
 import { DropCard } from "../components/DropCard";
 import type { TicketFace } from "../three/ticketTexture";
@@ -63,7 +63,7 @@ export function ParticipantDashboard({ user }: { user: User }) {
   };
   const join = async (drop: Drop) => {
     setBusy(drop.id); setToast("");
-    try { await api(`/api/drops/${drop.id}/entries`, { method: "POST", body: "{}" }); setToast(`You’re in the draw for ${drop.title}.`); }
+    try { await joinDrop(drop.id); setToast(`You’re in the draw for ${drop.title}.`); }
     catch (e) { setToast((e as Error).message); }
     finally { await refresh(); setBusy(""); }
   };
@@ -164,7 +164,7 @@ function EntryCard({ drop, entry, busy, onConfirm }: { drop: Drop; entry: Entry;
     <div className="entry-details">
       <div><span>RECEIPT</span><strong>{entry.id.slice(-8).toUpperCase()}</strong></div>
       <div><span>DRAW POSITION</span><strong>{entry.rank ? `#${entry.rank}` : "Pending"}</strong></div>
-      <div><span>POLICY</span><strong>{drop.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</strong></div>
+      <div><span>POLICY</span><strong>{drop.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</strong>{entry.rank && drop.allocationPolicy === "RANDOM_DRAW" && <Link className="verify-link" to={`/verify/${drop.id}?receipt=${entry.id.slice(-8)}`}><Fingerprint size={12} /> Verify draw</Link>}</div>
     </div>
     {entry.status === "CONFIRMED" && <div className="ticket-confirmed"><div><span>YOUR SIMULATED TICKET</span><strong>{entry.ticketCode}</strong></div><span className="confirmed-stamp"><Check size={14} /> CONFIRMED</span></div>}
     <div className="entry-actions">

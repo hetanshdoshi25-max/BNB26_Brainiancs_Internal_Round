@@ -9,6 +9,7 @@ import { AuthPage } from "./pages/AuthPage";
 import { ParticipantDashboard } from "./pages/ParticipantDashboard";
 import { OrganizerDashboard } from "./pages/OrganizerDashboard";
 import { AttackLab } from "./pages/AttackLab";
+import { VerifyDraw } from "./pages/VerifyDraw";
 
 const BackgroundScene = lazy(() => import("./three/BackgroundScene"));
 
@@ -36,6 +37,7 @@ export default function App() {
           <Route path="/" element={<Discover user={user} />} />
           <Route path="/sign-in" element={<AuthPage mode="login" onAuth={setUser} />} />
           <Route path="/register" element={<AuthPage mode="register" onAuth={setUser} />} />
+          <Route path="/verify/:dropId" element={<VerifyDraw />} />
           <Route path="*" element={<Discover user={user} />} />
         </Route>
         <Route path="/my-entry" element={<Navigate to="/dashboard" replace />} />

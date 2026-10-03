@@ -1,7 +1,7 @@
 import { lazy, useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowRight, Bot, Dices, Gauge, LockKeyhole, RefreshCcw, ShieldCheck, Ticket, Timer, UserRound, X, Zap } from "lucide-react";
-import { api, homeFor, loadDropsWithEntries, type Drop, type Entry, type User } from "../lib/api";
+import { homeFor, joinDrop, loadDropsWithEntries, type Drop, type Entry, type User } from "../lib/api";
 import { CountUp, Reveal, SceneBoundary, ScrambleText } from "../components/fx";
 import { DropCard } from "../components/DropCard";
 
@@ -30,7 +30,7 @@ export function Discover({ user }: { user: User | null }) {
     if (!user) { navigate(`/sign-in?next=${encodeURIComponent("/")}`); return; }
     setBusy(drop.id); setNotice("");
     try {
-      await api(`/api/drops/${drop.id}/entries`, { method: "POST", body: "{}" });
+      await joinDrop(drop.id);
       setNotice("You’re in. Your receipt is saved to your dashboard."); await refresh();
     } catch (e) { setNotice((e as Error).message); }
     finally { setBusy(""); }

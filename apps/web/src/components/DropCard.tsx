@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowRight, ArrowUpRight, Check, Clock3, Music2, Radio, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Check, Clock3, Fingerprint, Music2, Radio, ShieldCheck, Sparkles } from "lucide-react";
 import { formatDate, statusLabel, type Drop, type Entry } from "../lib/api";
 import { TiltCard } from "./fx";
 
@@ -31,8 +31,10 @@ export function DropCard({ drop, entry, onJoin, joining, index, entryHref = "/da
       </div>
       <div className="card-bottom">
         {state ? <div className={`entry-chip entry-${state.toLowerCase()}`}><Check size={14} /> {statusLabel(state)}</div>
-          : <span className="card-reassurance">{drop.allocationPolicy === "RANDOM_DRAW" ? <><ShieldCheck size={13} /> Arrival speed won’t set rank</> : <><Clock3 size={13} /> Arrival order sets rank</>}</span>}
-        {drop.status === "OPEN" && !state ? <button className="button button-primary card-cta" disabled={joining} onClick={onJoin}>{joining ? "Saving…" : "Enter the draw"}<ArrowUpRight size={15} /></button>
+          : <span className="card-reassurance">{drop.allocationPolicy === "RANDOM_DRAW" ? (drop.drawSeedHash
+            ? <span title={`Published seed hash: ${drop.drawSeedHash}`}><Fingerprint size={13} /> Draw sealed · <code>{drop.drawSeedHash.slice(0, 8)}</code></span>
+            : <><ShieldCheck size={13} /> Arrival speed won’t set rank</>) : <><Clock3 size={13} /> Arrival order sets rank</>}</span>}
+        {drop.status === "OPEN" && !state ? <button className="button button-primary card-cta" disabled={joining} onClick={onJoin}>{joining ? "Verifying & saving…" : "Enter the draw"}<ArrowUpRight size={15} /></button>
           : state ? <Link className="card-link" to={entryHref}>View entry <ArrowRight size={14} /></Link>
           : <span className="card-link muted-link">{drop.status === "DRAFT" ? "Opening soon" : "Entry closed"}</span>}
       </div>
