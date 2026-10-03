@@ -110,18 +110,43 @@ export default function () {
   sleep(scenario === "baseline" ? 0.8 + Math.random() : 0.25);
 }
 
+function textSummary(file, metrics) {
+  const pct = (value) => `${(value * 100).toFixed(1)}%`;
+  const rows = [
+    ["Scenario", `${scenario} · ${users} VUs · ${duration}`],
+    ["Drop", dropId],
+    ["Total requests", metrics.requests.toLocaleString()],
+    ["Throughput", `${metrics.throughputPerSecond.toFixed(1)} req/s`],
+    ["Latency p95", `${metrics.latencyP95Ms.toFixed(1)} ms`],
+    ["Request failure rate", pct(metrics.requestFailureRate)],
+    ["Accepted or replayed", metrics.acceptedOrReplayed.toLocaleString()],
+    ["Throttled (429)", metrics.throttled.toLocaleString()],
+    ["Rejected", metrics.rejected.toLocaleString()],
+    ["Entry success rate", pct(metrics.joinSuccessRate)],
+  ];
+  const width = Math.max(...rows.map(([label]) => label.length));
+  const line = "─".repeat(width + 40);
+  return [
+    "", "  FAIR DROP LOAD TEST", `  ${line}`,
+    ...rows.map(([label, value]) => `  ${label.padEnd(width)}   ${value}`),
+    `  ${line}`, `  Saved to ${file}`, "",
+  ].join("\n");
+}
+
 export function handleSummary(data) {
-  return { [`tests/load/results-${scenario}-${dropId}.json`]: JSON.stringify({
-    scenario, dropId, generatedAt: new Date().toISOString(), vus: users, duration,
-    metrics: {
-      requests: data.metrics.http_reqs?.values?.count ?? 0,
-      throughputPerSecond: data.metrics.http_reqs?.values?.rate ?? 0,
-      latencyP95Ms: data.metrics.http_req_duration?.values?.["p(95)"] ?? 0,
-      requestFailureRate: data.metrics.http_req_failed?.values?.rate ?? 0,
-      acceptedOrReplayed: data.metrics.entry_requests_accepted_or_replayed?.values?.count ?? 0,
-      throttled: data.metrics.entry_requests_throttled?.values?.count ?? 0,
-      rejected: data.metrics.entry_requests_rejected?.values?.count ?? 0,
-      joinSuccessRate: data.metrics.entry_attempt_success_rate?.values?.rate ?? 0,
-    },
-  }, null, 2) };
+  const file = `tests/load/results-${scenario}-${dropId}.json`;
+  const metrics = {
+    requests: data.metrics.http_reqs?.values?.count ?? 0,
+    throughputPerSecond: data.metrics.http_reqs?.values?.rate ?? 0,
+    latencyP95Ms: data.metrics.http_req_duration?.values?.["p(95)"] ?? 0,
+    requestFailureRate: data.metrics.http_req_failed?.values?.rate ?? 0,
+    acceptedOrReplayed: data.metrics.entry_requests_accepted_or_replayed?.values?.count ?? 0,
+    throttled: data.metrics.entry_requests_throttled?.values?.count ?? 0,
+    rejected: data.metrics.entry_requests_rejected?.values?.count ?? 0,
+    joinSuccessRate: data.metrics.entry_attempt_success_rate?.values?.rate ?? 0,
+  };
+  return {
+    stdout: textSummary(file, metrics),
+    [file]: JSON.stringify({ scenario, dropId, generatedAt: new Date().toISOString(), vus: users, duration, metrics }, null, 2),
+  };
 }
