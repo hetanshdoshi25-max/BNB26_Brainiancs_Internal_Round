@@ -12,6 +12,9 @@ import { z } from "zod";
 import { prisma } from "./db";
 import { enforceBudget, redis, redisHealth } from "./redis";
 import { hashToken, requireOrganizer, requireUser, SESSION_COOKIE, startSession } from "./auth";
+import { fairnessReport, newDrawSeed, recordJoinAttempt, seededShuffle, trafficSeries } from "./fairness";
+import { currentDifficulty, issueChallenge, powEnabled, verifyProof, type PowAction } from "./pow";
+import { humanScore } from "./signals";
 
 const app = express();
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
@@ -72,6 +75,10 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
   if (!(await budgetOr429(req, res, "auth"))) return;
   const parsed = registerSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Check your details." });
+  if (powEnabled) {
+    const powError = await verifyProof("register", req.body?.pow);
+    if (powError) return res.status(428).json({ error: powError });
+  }
   const email = parsed.data.email.toLowerCase();
   const passwordHash = await bcrypt.hash(passwordDigest(parsed.data.password), 12);
   const organizerEmails = (process.env.ORGANIZER_EMAILS ?? "").split(",").map((value) => value.trim().toLowerCase()).filter(Boolean);
@@ -82,6 +89,7 @@ app.post("/api/auth/register", asyncRoute(async (req, res) => {
         email,
         passwordHash,
         role: organizerEmails.includes(email) ? "ORGANIZER" : "PARTICIPANT",
+        signupHumanScore: humanScore(req.body?.signals),
       },
       select: { id: true, email: true, name: true, role: true },
     });
@@ -119,7 +127,7 @@ app.get("/api/auth/me", requireUser, (req, res) => res.json({ user: req.user }))
 const dropSummary = {
   id: true, title: true, description: true, venue: true, eventDate: true,
   capacity: true, allocationPolicy: true, limitsEnabled: true, status: true, opensAt: true, closesAt: true,
-  reservationMinutes: true, drawCompletedAt: true, createdAt: true,
+  reservationMinutes: true, drawCompletedAt: true, createdAt: true, drawSeedHash: true, drawCommittedAt: true,
 } as const;
 
 app.get("/api/drops", asyncRoute(async (_req, res) => {
@@ -148,7 +156,20 @@ app.get("/api/drops/:dropId/my-entry", requireUser, asyncRoute(async (req, res) 
 app.post("/api/drops/:dropId/entries", requireUser, asyncRoute(async (req, res) => {
   const currentDrop = await prisma.drop.findUnique({ where: { id: req.params.dropId }, select: { id: true, limitsEnabled: true } });
   if (!currentDrop) return res.status(404).json({ error: "Drop not found." });
-  if (currentDrop.limitsEnabled && !(await budgetOr429(req, res, "join", req.user!.id))) return;
+  const userId = req.user!.id;
+  if (currentDrop.limitsEnabled && !(await budgetOr429(req, res, "join", userId))) {
+    recordJoinAttempt(currentDrop.id, userId, "throttled");
+    return;
+  }
+  // Protected drops also require a solved proof-of-work puzzle on every entry request.
+  if (currentDrop.limitsEnabled && powEnabled) {
+    const powError = await verifyProof("join", req.body?.pow);
+    if (powError) {
+      recordJoinAttempt(currentDrop.id, userId, "rejected");
+      return res.status(428).json({ error: powError });
+    }
+  }
+  const score = humanScore(req.body?.signals);
   try {
     const result = await prisma.$transaction(async (tx) => {
       await lockDrop(tx, req.params.dropId);
@@ -156,18 +177,21 @@ app.post("/api/drops/:dropId/entries", requireUser, asyncRoute(async (req, res) 
       if (!drop) return { kind: "missing" as const };
       const now = new Date();
       if (drop.status !== "OPEN" || !drop.opensAt || !drop.closesAt || now < drop.opensAt || now >= drop.closesAt) return { kind: "closed" as const };
-      const prior = await tx.entry.findUnique({ where: { dropId_userId: { dropId: drop.id, userId: req.user!.id } } });
+      const prior = await tx.entry.findUnique({ where: { dropId_userId: { dropId: drop.id, userId } } });
       if (prior) return { kind: "existing" as const, entry: prior };
-      return { kind: "created" as const, entry: await tx.entry.create({ data: { dropId: drop.id, userId: req.user!.id } }) };
+      return { kind: "created" as const, entry: await tx.entry.create({ data: { dropId: drop.id, userId, humanScore: score } }) };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    recordJoinAttempt(currentDrop.id, userId, result.kind === "created" || result.kind === "existing" ? "accepted" : "rejected");
     if (result.kind === "missing") return res.status(404).json({ error: "Drop not found." });
     if (result.kind === "closed") return res.status(409).json({ error: "The entry window is closed." });
     return res.status(result.kind === "created" ? 201 : 200).json({ entry: result.entry, existing: result.kind === "existing" });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const entry = await prisma.entry.findUnique({ where: { dropId_userId: { dropId: req.params.dropId, userId: req.user!.id } } });
+      recordJoinAttempt(currentDrop.id, userId, "accepted");
+      const entry = await prisma.entry.findUnique({ where: { dropId_userId: { dropId: req.params.dropId, userId } } });
       return res.json({ entry, existing: true });
     }
+    recordJoinAttempt(currentDrop.id, userId, "rejected");
     throw error;
   }
 }));
@@ -180,14 +204,6 @@ async function shareDrop(tx: Prisma.TransactionClient, dropId: string) {
   await tx.$queryRaw`SELECT id FROM "Drop" WHERE id = ${dropId} FOR SHARE`;
 }
 
-function shuffle<T>(items: T[]) {
-  for (let i = items.length - 1; i > 0; i--) {
-    const j = randomInt(i + 1);
-    [items[i], items[j]] = [items[j]!, items[i]!];
-  }
-  return items;
-}
-
 async function closeDrop(dropId: string) {
   return prisma.$transaction(async (tx) => {
     await lockDrop(tx, dropId);
@@ -198,7 +214,12 @@ async function closeDrop(dropId: string) {
       where: { dropId, status: "ENTERED" }, select: { id: true },
       orderBy: drop.allocationPolicy === "FIRST_COME" ? { arrivalSequence: "asc" } : undefined,
     });
-    const ordered = drop.allocationPolicy === "FIRST_COME" ? entries : shuffle(entries);
+    // Random draws shuffle with the seed committed when entry opened, so anyone can
+    // re-run the draw from the revealed seed. Drops opened before commitments existed get
+    // a fresh seed now (reported as uncommitted by the audit endpoint).
+    const fallback = drop.allocationPolicy === "RANDOM_DRAW" && !drop.drawSeed ? newDrawSeed() : null;
+    const seed = drop.drawSeed ?? fallback?.seed ?? "";
+    const ordered = drop.allocationPolicy === "FIRST_COME" ? entries : seededShuffle(entries.map((entry) => entry.id), seed).map((id) => ({ id }));
     const completedAt = new Date();
     const expiry = new Date(completedAt.getTime() + drop.reservationMinutes * 60_000);
     // Null ranks first, then assign in bounded statements. The unique index makes
@@ -216,7 +237,10 @@ async function closeDrop(dropId: string) {
     }
     await tx.entry.updateMany({ where: { dropId, rank: { lte: drop.capacity } }, data: { status: "RESERVED", reservationExpiresAt: expiry } });
     await tx.entry.updateMany({ where: { dropId, rank: { gt: drop.capacity } }, data: { status: "WAITLISTED" } });
-    return tx.drop.update({ where: { id: dropId }, data: { status: "CLOSED", closesAt: completedAt, drawCompletedAt: completedAt } });
+    return tx.drop.update({
+      where: { id: dropId },
+      data: { status: "CLOSED", closesAt: completedAt, drawCompletedAt: completedAt, ...(fallback ? { drawSeed: fallback.seed, drawSeedHash: fallback.seedHash } : {}) },
+    });
   }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 120_000 });
 }
 
@@ -267,7 +291,11 @@ app.post("/api/organizer/drops/:dropId/open", requireUser, requireOrganizer, asy
   const now = new Date();
   const opened = await prisma.drop.updateMany({
     where: { id: drop.id, status: "DRAFT" },
-    data: { status: "OPEN", opensAt: now, closesAt: new Date(now.getTime() + parsed.data.durationMinutes * 60_000) },
+    data: {
+      status: "OPEN", opensAt: now, closesAt: new Date(now.getTime() + parsed.data.durationMinutes * 60_000),
+      // Commit to the draw seed before anyone enters: only its hash is public until the draw.
+      ...(drop.allocationPolicy === "RANDOM_DRAW" ? (({ seed, seedHash }) => ({ drawSeed: seed, drawSeedHash: seedHash, drawCommittedAt: now }))(newDrawSeed()) : {}),
+    },
   });
   if (!opened.count) return res.status(409).json({ error: "This drop was already opened." });
   return res.json({ drop: await prisma.drop.findUnique({ where: { id: drop.id }, select: dropSummary }) });
@@ -334,6 +362,53 @@ app.get("/api/organizer/overview", requireUser, requireOrganizer, asyncRoute(asy
     redis.get("metrics:throttled"),
   ]);
   res.json({ drops, accounts, entries, confirmed, throttled: Number(throttled ?? 0) });
+}));
+
+// Proof-of-work challenge. Entry to a drop without abuse limits (the baseline policy) needs none.
+app.get("/api/pow/challenge", asyncRoute(async (req, res) => {
+  const action = req.query.action === "join" ? "join" : req.query.action === "register" ? "register" : null;
+  if (!action) return res.status(400).json({ error: "Unknown action." });
+  if (!powEnabled) return res.json({ required: false });
+  if (action === "join") {
+    const dropId = typeof req.query.dropId === "string" ? req.query.dropId : "";
+    const drop = await prisma.drop.findUnique({ where: { id: dropId }, select: { limitsEnabled: true } });
+    if (!drop) return res.status(404).json({ error: "Drop not found." });
+    if (!drop.limitsEnabled) return res.json({ required: false });
+  }
+  res.setHeader("Cache-Control", "no-store");
+  res.json(await issueChallenge(action as PowAction));
+}));
+
+// Public draw audit: the committed hash always, the seed and full rank list once drawn,
+// so anyone can recompute the shuffle independently.
+app.get("/api/drops/:dropId/audit", asyncRoute(async (req, res) => {
+  const drop = await prisma.drop.findUnique({
+    where: { id: req.params.dropId },
+    select: { id: true, title: true, capacity: true, status: true, allocationPolicy: true, opensAt: true, drawCompletedAt: true, drawSeedHash: true, drawSeed: true, drawCommittedAt: true },
+  });
+  if (!drop) return res.status(404).json({ error: "Drop not found." });
+  const { drawSeed, ...publicDrop } = drop;
+  const revealed = !!drop.drawCompletedAt;
+  const entries = revealed
+    ? await prisma.entry.findMany({ where: { dropId: drop.id, rank: { not: null } }, select: { id: true, rank: true, arrivalSequence: true }, orderBy: { rank: "asc" } })
+    : [];
+  res.json({
+    drop: publicDrop,
+    revealed,
+    seed: revealed && drop.allocationPolicy === "RANDOM_DRAW" ? drawSeed : null,
+    committedBeforeEntry: !!drop.drawCommittedAt && !!drop.opensAt && drop.drawCommittedAt.getTime() <= drop.opensAt.getTime(),
+    entries: entries.map((entry) => ({ id: entry.id, rank: entry.rank, arrival: entry.arrivalSequence })),
+  });
+}));
+
+app.get("/api/organizer/drops/:dropId/fairness", requireUser, requireOrganizer, asyncRoute(async (req, res) => {
+  const [report, join, register] = await Promise.all([fairnessReport(req.params.dropId), currentDifficulty("join"), currentDifficulty("register")]);
+  if (!report) return res.status(404).json({ error: "Drop not found." });
+  res.json({ ...report, pow: { enabled: powEnabled, join, register } });
+}));
+
+app.get("/api/organizer/drops/:dropId/traffic", requireUser, requireOrganizer, asyncRoute(async (req, res) => {
+  res.json({ series: await trafficSeries(req.params.dropId, 120) });
 }));
 
 // In a deployment the API also serves the built web app, so the site and API share one

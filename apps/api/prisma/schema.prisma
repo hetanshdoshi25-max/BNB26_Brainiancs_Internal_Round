@@ -37,6 +37,7 @@ model User {
   passwordHash String
   name         String
   role         Role      @default(PARTICIPANT)
+  signupHumanScore Int?
   createdAt    DateTime  @default(now())
   sessions     Session[]
   entries      Entry[]
@@ -67,6 +68,9 @@ model Drop {
   closesAt           DateTime?
   reservationMinutes Int        @default(10)
   drawCompletedAt    DateTime?
+  drawSeedHash       String?
+  drawSeed           String?
+  drawCommittedAt    DateTime?
   createdAt          DateTime   @default(now())
   entries            Entry[]
 
@@ -84,6 +88,7 @@ model Entry {
   reservationExpiresAt DateTime?
   confirmedAt          DateTime?
   ticketCode           String?     @unique
+  humanScore           Int?
   drop                 Drop        @relation(fields: [dropId], references: [id], onDelete: Cascade)
   user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
