@@ -3,6 +3,8 @@ import Redis from "ioredis";
 
 export const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: 1,
+  // Resolve IPv4 and IPv6 alike; hosted private networks (e.g. Railway) may be IPv6-only.
+  family: 0,
   retryStrategy: (attempt) => Math.min(attempt * 250, 3000),
 });
 

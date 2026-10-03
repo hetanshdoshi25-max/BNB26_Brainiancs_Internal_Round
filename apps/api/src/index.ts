@@ -5,6 +5,8 @@ import helmet from "helmet";
 import cookieParser from "cookie-parser";
 import bcrypt from "bcryptjs";
 import { createHash, randomInt, randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "./db";
@@ -12,7 +14,7 @@ import { enforceBudget, redis, redisHealth } from "./redis";
 import { hashToken, requireOrganizer, requireUser, SESSION_COOKIE, startSession } from "./auth";
 
 const app = express();
-const port = Number(process.env.API_PORT ?? 4000);
+const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
 const origin = process.env.WEB_ORIGIN ?? "http://localhost:5173";
 const appEnv = process.env.NODE_ENV ?? "development";
 
@@ -333,6 +335,14 @@ app.get("/api/organizer/overview", requireUser, requireOrganizer, asyncRoute(asy
   ]);
   res.json({ drops, accounts, entries, confirmed, throttled: Number(throttled ?? 0) });
 }));
+
+// In a deployment the API also serves the built web app, so the site and API share one
+// origin and the session cookie works without cross-site settings. Skipped in dev (Vite serves it).
+const webDist = process.env.WEB_DIST ?? path.resolve(__dirname, "../../../web/dist");
+if (existsSync(path.join(webDist, "index.html"))) {
+  app.use(express.static(webDist, { index: false, maxAge: "1h" }));
+  app.get(/^\/(?!api(\/|$)).*/, (_req, res) => res.sendFile(path.join(webDist, "index.html")));
+}
 
 app.use((_req, res) => res.status(404).json({ error: "Endpoint not found." }));
 app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {

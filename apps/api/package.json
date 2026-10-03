@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "build": "npm run db:generate && tsc -p tsconfig.json",
+    "start": "node dist/src/index.js",
     "db:generate": "node scripts/prisma.cjs generate --schema prisma/schema.prisma",
     "db:migrate": "node scripts/prisma.cjs migrate dev --schema prisma/schema.prisma --name init",
     "db:seed": "tsx prisma/seed.ts",
-    "load:accounts": "tsx scripts/seed-load-users.ts"
+    "load:accounts": "tsx scripts/seed-load-users.ts",
+    "db:deploy": "node scripts/prisma.cjs migrate deploy --schema prisma/schema.prisma"
   },
   "dependencies": {
     "@prisma/client": "^6.3.1",
