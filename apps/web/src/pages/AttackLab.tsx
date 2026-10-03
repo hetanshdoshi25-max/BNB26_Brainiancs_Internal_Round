@@ -20,7 +20,7 @@ export function AttackLab() {
   const [dropId, setDropId] = useState("");
   const [baseUrl, setBaseUrl] = useState("http://localhost:4000");
   useEffect(() => { api<{ drops: Drop[] }>("/api/drops").then(({ drops }) => { setDrops(drops); setDropId(drops[0]?.id ?? ""); }).catch(() => undefined); }, []);
-  const command = `k6 run -e BASE_URL=${baseUrl.trim().replace(/\s/g, "")} -e DROP_ID=${dropId || "<drop-id>"} -e SCENARIO=${scenario} -e VUS=${vus} -e DURATION=${duration}s -e ACCOUNTS_FILE=tests/load/accounts.local.json tests/load/fair-drop.js`;
+  const command = `k6 run -e BASE_URL=${baseUrl.trim().replace(/\s/g, "")} -e DROP_ID=${dropId || "<drop-id>"} -e SCENARIO=${scenario} -e VUS=${vus} -e DURATION=${duration}s -e ACCOUNTS_FILE=./accounts.local.json tests/load/fair-drop.js`;
   const copy = async () => {
     try { await navigator.clipboard.writeText(command); setCopied(true); window.setTimeout(() => setCopied(false), 1800); }
     catch { setCopied(false); }

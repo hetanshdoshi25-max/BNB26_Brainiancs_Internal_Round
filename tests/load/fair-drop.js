@@ -9,7 +9,8 @@ const scenario = __ENV.SCENARIO || "baseline";
 const users = Math.max(1, Math.min(2000, Number(__ENV.VUS || 24)));
 const maxActiveVus = scenario === "burst" ? Math.min(2000, users * 2) : users;
 const duration = __ENV.DURATION || "30s";
-const accountsFile = __ENV.ACCOUNTS_FILE || "tests/load/accounts.local.json";
+// k6 resolves open() paths relative to this script, not the working directory.
+const accountsFile = __ENV.ACCOUNTS_FILE || "./accounts.local.json";
 const accounts = new SharedArray("fair-drop-test-accounts", () => JSON.parse(open(accountsFile)));
 
 const accepted = new Counter("entry_requests_accepted_or_replayed");
