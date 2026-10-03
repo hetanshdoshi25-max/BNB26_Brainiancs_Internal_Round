@@ -108,11 +108,11 @@ function CameraRig() {
 }
 
 const defaultFace: TicketFace = {
-  kicker: "Admit one · fair draw",
+  kicker: "Admit one · randomized draw",
   title: "FAIR DROP",
   subtitle: "500 SEATS · 50,000 FANS",
-  code: "FD-0001-EQUAL-ODDS",
-  stamp: "NO BOTS",
+  code: "FD-0001-SEALED-DRAW",
+  stamp: "SEALED DRAW",
   accent: "#a78bfa",
   accent2: "#f472b6",
 };

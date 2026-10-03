@@ -7,7 +7,7 @@ import { DropCard } from "../components/DropCard";
 
 const HeroScene = lazy(() => import("../three/HeroScene"));
 
-const MARQUEE = ["ONE ACCOUNT", "ONE ENTRY", "RANDOM DRAW", "RATE LIMITED", "IDEMPOTENT RETRIES", "NO OVERSELLING", "SAVED STATE", "BOTS DON'T WIN"];
+const MARQUEE = ["ONE ELIGIBLE ACCOUNT", "ONE ENTRY", "RANDOM DRAW", "RATE LIMITED", "IDEMPOTENT RETRIES", "NO OVERSELLING", "SAVED STATE", "RETRIES DON'T MULTIPLY CHANCES"];
 
 export function Discover({ user }: { user: User | null }) {
   const [drops, setDrops] = useState<Drop[]>([]);
@@ -44,8 +44,8 @@ export function Discover({ user }: { user: User | null }) {
       <div className="container hero-inner">
         <div className="hero-copy">
           <div className="eyebrow"><span className="eyebrow-line" /><ScrambleText text="THE DROP, REIMAGINED" /></div>
-          <h1><span className="h1-line">500 seats.</span><span className="h1-line">50,000 fans.</span><span className="h1-line gradient-text">Zero bots winning.</span></h1>
-          <p className="hero-description">A fair shot at the things worth showing up for. Enter once, leave the refresh button alone, and let a sealed random draw decide — not the fastest script.</p>
+          <h1><span className="h1-line">Speed should not</span><span className="h1-line gradient-text">buy an extra chance.</span></h1>
+          <p className="hero-description">Fair Drop separates entry from allocation. Eligible users enter during a fixed window, repeated requests don’t create extra entries, and allocation happens only after the window closes.</p>
           <div className="hero-actions">
             <a href="#drops" className="button button-primary button-lg">Find your drop <ArrowRight size={17} /></a>
             {user ? <Link to={homeFor(user)} className="button button-ghost button-lg">Open dashboard</Link> : <Link to="/register" className="button button-ghost button-lg">Create account</Link>}
@@ -53,12 +53,12 @@ export function Discover({ user }: { user: User | null }) {
           <div className="hero-stats">
             <div><strong><CountUp value={openCount} /></strong><span>LIVE DROPS</span></div>
             <div><strong><CountUp value={seats} /></strong><span>SEATS ON OFFER</span></div>
-            <div><strong>1</strong><span>ENTRY / ACCOUNT</span></div>
+            <div><strong>1</strong><span>ENTRY / ELIGIBLE ACCOUNT</span></div>
           </div>
         </div>
         <div className="hero-hud" aria-hidden="true">
           <div className="hud-chip hud-a"><span className="hud-dot gold" /> 500 golden seats in the swarm</div>
-          <div className="hud-chip hud-b"><ShieldCheck size={13} /> Speed gives no advantage</div>
+          <div className="hud-chip hud-b"><ShieldCheck size={13} /> Automation shouldn’t buy an advantage</div>
         </div>
       </div>
       <a href="#how" className="scroll-cue" aria-label="Scroll down"><span /></a>
@@ -71,7 +71,7 @@ export function Discover({ user }: { user: User | null }) {
       <div className="how-grid">
         {[
           { icon: <UserRound size={22} />, n: "01", title: "Enter once", body: "Your spot is saved server-side. Retrying never creates a second entry." },
-          { icon: <Timer size={22} />, n: "02", title: "Let the window close", body: "No race, no refresh. Arriving in second one or minute twenty is the same." },
+          { icon: <Timer size={22} />, n: "02", title: "Let the window close", body: "No race, no refresh. In a protected drop, entering in minute one or minute twenty gives the same chance." },
           { icon: <Dices size={22} />, n: "03", title: "The sealed draw", body: "The eligible list is frozen and shuffled once. The order is saved for good." },
           { icon: <Ticket size={22} />, n: "04", title: "Confirm your seat", body: "Winners get a timed hold. Expired holds roll to the next on the waitlist." },
         ].map((step, i) => <Reveal key={step.n} delay={i * 110} className="how-card glass">
@@ -96,11 +96,11 @@ export function Discover({ user }: { user: User | null }) {
         <div className="versus-divider"><span>VS</span></div>
         <div className="versus-side versus-good">
           <span className="section-kicker">FAIR DROP</span>
-          <h3><ShieldCheck size={20} /> A draw between people</h3>
+          <h3><ShieldCheck size={20} /> A randomized draw between eligible entries</h3>
           <ul>
-            <li><LockKeyhole size={14} /> One entry per account, enforced in the database</li>
-            <li><ShieldCheck size={14} /> Per-account and per-IP budgets throttle floods</li>
-            <li><Dices size={14} /> Random order means speed buys nothing</li>
+            <li><LockKeyhole size={14} /> One eligible account, one entry, enforced in the database</li>
+            <li><ShieldCheck size={14} /> Per-account and per-IP budgets throttle floods; retries don’t multiply chances</li>
+            <li><Dices size={14} /> Allocation happens after the window closes, so speed doesn’t buy an extra chance</li>
           </ul>
           <div className="race-bars">{[50, 50, 50, 50, 50, 50].map((w, i) => <div key={i} className="race-fair" style={{ width: `${w}%`, animationDelay: `${i * 120}ms` }}><span>{i < 3 ? "BOT" : "FAN"}</span></div>)}</div>
         </div>

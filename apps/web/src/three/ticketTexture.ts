@@ -112,7 +112,7 @@ function drawFront(ctx: CanvasRenderingContext2D, w: number, h: number, face: Ti
   ctx.fillText(face.stamp, 0, -28);
   ctx.fillStyle = "rgba(255,255,255,0.6)";
   ctx.font = `500 22px ${mono}`;
-  ctx.fillText("ONE ENTRY · SAME ODDS", 0, 22);
+  ctx.fillText("ONE ACCOUNT · ONE ENTRY", 0, 22);
   ctx.restore();
 
   // Barcode

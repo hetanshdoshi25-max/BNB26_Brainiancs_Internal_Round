@@ -13,7 +13,7 @@ const AUTH_FACE = {
   title: "ADMIT ONE",
   subtitle: "ONE ACCOUNT · ONE ENTRY",
   code: "FD-YOUR-NEXT-NIGHT",
-  stamp: "EQUAL ODDS",
+  stamp: "ONE ENTRY",
   accent: "#22d3ee",
   accent2: "#a78bfa",
 };
@@ -51,10 +51,10 @@ export function AuthPage({ mode, onAuth }: { mode: "login" | "register"; onAuth:
     <div className="auth-aside glass">
       <div className="auth-scene" aria-hidden="true"><SceneBoundary><HeroScene face={AUTH_FACE} compact /></SceneBoundary></div>
       <div className="auth-aside-inner">
-        <span className="eyebrow"><span className="eyebrow-line" /> EVERYONE GETS A SHOT</span>
+        <span className="eyebrow"><span className="eyebrow-line" /> ONE ELIGIBLE ACCOUNT · ONE ENTRY</span>
         <h1>Your chance.<br /><span className="gradient-text">Fairly drawn.</span></h1>
         <p>Because getting there first shouldn’t mean getting in first.</p>
-        <div className="auth-mini-ticket"><div className="mini-ticket-icon"><Ticket size={20} /></div><div><span>THE FAIR DROP PROMISE</span><strong>One account. One entry. Equal odds.</strong></div><Check size={17} /></div>
+        <div className="auth-mini-ticket"><div className="mini-ticket-icon"><Ticket size={20} /></div><div><span>THE FAIR DROP PROMISE</span><strong>Retries don’t multiply chances.</strong></div><Check size={17} /></div>
       </div>
     </div>
     <div className="auth-form-side">
