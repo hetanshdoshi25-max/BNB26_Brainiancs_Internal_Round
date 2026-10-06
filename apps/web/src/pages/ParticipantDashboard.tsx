@@ -1,9 +1,10 @@
 import { lazy, useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, BellRing, Check, Clock3, Compass, Dices, Fingerprint, Hourglass, LockKeyhole, ShieldCheck, Ticket, TicketCheck, Trophy, X, Zap } from "lucide-react";
+import { Armchair, ArrowRight, BellRing, Check, Clock3, Compass, Dices, Fingerprint, Hourglass, LockKeyhole, ShieldCheck, Ticket, TicketCheck, Trophy, X, Zap } from "lucide-react";
 import { api, formatDate, formatRemaining, joinDrop, loadDropsWithEntries, statusLabel, type Drop, type Entry, type User } from "../lib/api";
 import { CountUp, Reveal, Ring, SceneBoundary } from "../components/fx";
 import { DropCard } from "../components/DropCard";
+import { SeatPicker } from "../components/SeatPicker";
 import type { TicketFace } from "../three/ticketTexture";
 
 const HoloTicketScene = lazy(() => import("../three/HoloTicketScene"));
@@ -45,6 +46,7 @@ export function ParticipantDashboard({ user }: { user: User }) {
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState("");
   const [toast, setToast] = useState("");
+  const [picking, setPicking] = useState("");
   const [error, setError] = useState("");
   const refresh = useCallback(async () => {
     try {
@@ -57,7 +59,7 @@ export function ParticipantDashboard({ user }: { user: User }) {
 
   const confirm = async (dropId: string) => {
     setBusy(dropId); setToast("");
-    try { await api(`/api/drops/${dropId}/confirm`, { method: "POST", body: "{}" }); setToast("Your ticket is confirmed. You’re going!"); }
+    try { await api(`/api/drops/${dropId}/confirm`, { method: "POST", body: "{}" }); setToast("Your ticket is confirmed. You’re going!"); setPicking(""); }
     catch (e) { setToast((e as Error).message); }
     finally { await refresh(); setBusy(""); }
   };
@@ -112,13 +114,13 @@ export function ParticipantDashboard({ user }: { user: User }) {
       </div>
     </section>
 
-    {reservations.map(({ drop, entry }) => <ReservationAlert key={drop.id} drop={drop} entry={entry} busy={busy === drop.id} onConfirm={() => void confirm(drop.id)} />)}
+    {reservations.map(({ drop, entry }) => <ReservationAlert key={drop.id} drop={drop} entry={entry} busy={busy === drop.id} onConfirm={() => void confirm(drop.id)} onPickSeat={() => setPicking(drop.id)} />)}
 
     <section id="tickets" className="dash-section">
       <div className="dash-section-head"><div><span className="section-kicker">YOUR ENTRIES</span><h2>Receipts &amp; tickets</h2></div><span className="table-count">{mine.length} saved</span></div>
       {!loaded ? <div className="entry-grid">{[0, 1].map((i) => <div key={i} className="skeleton-card glass short" />)}</div>
         : mine.length === 0 ? <div className="empty-state glass"><div className="empty-icon"><Ticket size={22} /></div><h3>No entries yet</h3><p>When you enter a drop, your saved receipt appears here.</p><a className="button button-primary" href="#open-drops">See open drops <ArrowRight size={15} /></a></div>
-        : <div className="entry-grid">{mine.map(({ drop, entry }, i) => <Reveal key={drop.id} delay={i * 70}><EntryCard drop={drop} entry={entry} busy={busy === drop.id} onConfirm={() => void confirm(drop.id)} /></Reveal>)}</div>}
+        : <div className="entry-grid">{mine.map(({ drop, entry }, i) => <Reveal key={drop.id} delay={i * 70}><EntryCard drop={drop} entry={entry} busy={busy === drop.id} onConfirm={() => void confirm(drop.id)} onPickSeat={() => setPicking(drop.id)} /></Reveal>)}</div>}
     </section>
 
     <section id="open-drops" className="dash-section">
@@ -127,11 +129,16 @@ export function ParticipantDashboard({ user }: { user: User }) {
         : <div className="drop-grid">{openToEnter.map((drop, index) => <DropCard key={drop.id} drop={drop} entry={null} index={index} joining={busy === drop.id} onJoin={() => void join(drop)} />)}</div>}
     </section>
 
+    {(() => {
+      const target = picking ? mine.find(({ drop }) => drop.id === picking) : undefined;
+      return target ? <SeatPicker drop={target.drop} entry={target.entry} busy={busy === target.drop.id} onClose={() => setPicking("")} onChanged={() => void refresh()} onConfirm={() => void confirm(target.drop.id)} /> : null;
+    })()}
+
     <div className="receipt-note glass"><ShieldCheck size={17} /><span>This dashboard checks your saved status every few seconds. It never creates another entry.</span></div>
   </div>;
 }
 
-function ReservationAlert({ drop, entry, busy, onConfirm }: { drop: Drop; entry: Entry; busy: boolean; onConfirm: () => void }) {
+function ReservationAlert({ drop, entry, busy, onConfirm, onPickSeat }: { drop: Drop; entry: Entry; busy: boolean; onConfirm: () => void; onPickSeat: () => void }) {
   const [, tick] = useState(0);
   useEffect(() => { const id = window.setInterval(() => tick((n) => n + 1), 1000); return () => window.clearInterval(id); }, []);
   const total = drop.reservationMinutes * 60_000;
@@ -143,11 +150,13 @@ function ReservationAlert({ drop, entry, busy, onConfirm }: { drop: Drop; entry:
       <h3>A seat at <span className="gradient-text">{drop.title}</span> is yours — for now.</h3>
       <p>Your draw rank {entry.rank ? `#${entry.rank}` : ""} won a seat. Confirm before the hold expires or it rolls to the next person on the waitlist.</p>
     </div>
-    <button className="button button-primary button-lg" onClick={onConfirm} disabled={busy}>{busy ? "Confirming…" : "Confirm ticket"}<ArrowRight size={16} /></button>
+    {drop.seatMap && !entry.seat
+      ? <button className="button button-primary button-lg" onClick={onPickSeat}><Armchair size={16} /> Pick your seat</button>
+      : <button className="button button-primary button-lg" onClick={onConfirm} disabled={busy}>{busy ? "Confirming…" : entry.seat ? `Confirm · seat ${entry.seat.label}` : "Confirm ticket"}<ArrowRight size={16} /></button>}
   </Reveal>;
 }
 
-function EntryCard({ drop, entry, busy, onConfirm }: { drop: Drop; entry: Entry; busy: boolean; onConfirm: () => void }) {
+function EntryCard({ drop, entry, busy, onConfirm, onPickSeat }: { drop: Drop; entry: Entry; busy: boolean; onConfirm: () => void; onPickSeat: () => void }) {
   const [time, setTime] = useState(formatRemaining(entry.reservationExpiresAt));
   useEffect(() => { const id = window.setInterval(() => setTime(formatRemaining(entry.reservationExpiresAt)), 1000); return () => window.clearInterval(id); }, [entry.reservationExpiresAt]);
   const canConfirm = entry.status === "RESERVED" && !!entry.reservationExpiresAt && new Date(entry.reservationExpiresAt).getTime() > Date.now();
@@ -166,9 +175,15 @@ function EntryCard({ drop, entry, busy, onConfirm }: { drop: Drop; entry: Entry;
       <div><span>DRAW POSITION</span><strong>{entry.rank ? `#${entry.rank}` : "Pending"}</strong></div>
       <div><span>POLICY</span><strong>{drop.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</strong>{entry.rank && drop.allocationPolicy === "RANDOM_DRAW" && <Link className="verify-link" to={`/verify/${drop.id}?receipt=${entry.id.slice(-8)}`}><Fingerprint size={12} /> Verify draw</Link>}</div>
     </div>
-    {entry.status === "CONFIRMED" && <div className="ticket-confirmed"><div><span>YOUR SIMULATED TICKET</span><strong>{entry.ticketCode}</strong></div><span className="confirmed-stamp"><Check size={14} /> CONFIRMED</span></div>}
+    {drop.seatMap && (entry.status === "RESERVED" || entry.status === "CONFIRMED") && <div className="seat-chip-row">
+      <Armchair size={15} /><span>{entry.seat ? <>Seat <b>{entry.seat.label}</b>{entry.status === "RESERVED" ? " · held for you" : " · booked"}</> : "No seat picked yet"}</span>
+      {canConfirm && <button type="button" className="text-link seat-change" onClick={onPickSeat}>{entry.seat ? "Change seat" : "Pick a seat"}</button>}
+    </div>}
+    {entry.status === "CONFIRMED" && <div className="ticket-confirmed"><div><span>YOUR SIMULATED TICKET{entry.seat ? ` · SEAT ${entry.seat.label}` : ""}</span><strong>{entry.ticketCode}</strong></div><span className="confirmed-stamp"><Check size={14} /> CONFIRMED</span></div>}
     <div className="entry-actions">
-      {canConfirm ? <><span className="countdown"><Clock3 size={14} /> {time}</span><button className="button button-primary" onClick={onConfirm} disabled={busy}>{busy ? "Confirming…" : "Confirm your ticket"}<ArrowRight size={15} /></button></>
+      {canConfirm ? <><span className="countdown"><Clock3 size={14} /> {time}</span>{drop.seatMap && !entry.seat
+          ? <button className="button button-primary" onClick={onPickSeat}><Armchair size={15} /> Pick your seat</button>
+          : <button className="button button-primary" onClick={onConfirm} disabled={busy}>{busy ? "Confirming…" : "Confirm your ticket"}<ArrowRight size={15} /></button>}</>
         : entry.status === "ENTERED" ? <span className="receipt-wait"><Dices size={14} /> Draw runs after the entry window closes</span>
         : entry.status === "WAITLISTED" ? <span className="receipt-wait"><Hourglass size={14} /> Your position is saved. A seat may free up.</span>
         : entry.status === "EXPIRED" ? <span className="receipt-wait"><LockKeyhole size={14} /> This hold expired and was released to the waitlist.</span>

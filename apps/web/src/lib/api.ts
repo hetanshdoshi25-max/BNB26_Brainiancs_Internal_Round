@@ -4,16 +4,17 @@ export type Drop = {
   capacity: number; allocationPolicy: "FIRST_COME" | "RANDOM_DRAW"; limitsEnabled: boolean;
   status: "DRAFT" | "OPEN" | "CLOSED"; opensAt: string | null;
   closesAt: string | null; reservationMinutes: number; drawCompletedAt: string | null;
-  drawSeedHash?: string | null; drawCommittedAt?: string | null;
+  drawSeedHash?: string | null; drawCommittedAt?: string | null; seatMap?: boolean;
 };
 export type Entry = {
   id: string; status: "ENTERED" | "RESERVED" | "WAITLISTED" | "CONFIRMED" | "EXPIRED";
   rank: number | null; enteredAt: string; reservationExpiresAt: string | null;
-  confirmedAt: string | null; ticketCode: string | null;
+  confirmedAt: string | null; ticketCode: string | null; seat?: { label: string } | null;
 };
 export type Metrics = { entered: number; reserved: number; waitlisted: number; confirmed: number; expired: number };
 export type Overview = { drops: number; accounts: number; entries: number; confirmed: number; throttled: number };
-export type OrganizerEntry = { id: string; status: Entry["status"]; rank: number | null; enteredAt: string; user: { email: string; name: string } };
+export type OrganizerEntry = { id: string; status: Entry["status"]; rank: number | null; enteredAt: string; user: { email: string; name: string }; seat?: { label: string } | null };
+export type SeatInfo = { label: string; row: string; number: number; state: "available" | "held" | "booked" | "mine" };
 export type FairnessBucket = { label: string; detail: string; entrants: number; winners: number; winRate: number | null };
 export type Difficulty = { bits: number; requestsPerSecond: number };
 export type FairnessReport = {
@@ -92,3 +93,6 @@ export async function joinDrop(dropId: string, onStage?: (stage: "verifying" | "
     }
   }
 }
+
+export const loadSeats = (dropId: string) => api<{ seatsPerRow: number; seats: SeatInfo[] }>(`/api/drops/${dropId}/seats`);
+export const holdSeat = (dropId: string, label: string) => api<{ seat: string; holdUntil: string }>(`/api/drops/${dropId}/seats/${encodeURIComponent(label)}`, { method: "POST", body: "{}" });

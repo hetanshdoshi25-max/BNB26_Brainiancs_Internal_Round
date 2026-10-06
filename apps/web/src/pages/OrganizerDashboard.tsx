@@ -54,7 +54,7 @@ export function OrganizerDashboard() {
     const payload = {
       title: String(form.get("title")), description: String(form.get("description")), venue: String(form.get("venue")),
       eventDate: new Date(String(form.get("eventDate"))).toISOString(), capacity: Number(form.get("capacity")), reservationMinutes: Number(form.get("reservationMinutes")),
-      allocationPolicy: String(form.get("allocationPolicy")), limitsEnabled: form.get("limitsEnabled") === "on",
+      allocationPolicy: String(form.get("allocationPolicy")), limitsEnabled: form.get("limitsEnabled") === "on", seatMap: form.get("seatMap") === "on",
     };
     try {
       const { drop } = await api<{ drop: Drop }>("/api/organizer/drops", { method: "POST", body: JSON.stringify(payload) });
@@ -78,7 +78,7 @@ export function OrganizerDashboard() {
       const result = await api<{ entries: OrganizerEntry[] }>(`/api/organizer/drops/${selected}/entries?page=${page}`);
       allEntries.push(...result.entries);
     }
-    const rows = [["rank", "name", "email", "status", "enteredAt"], ...allEntries.map((entry) => [String(entry.rank ?? ""), entry.user.name, entry.user.email, entry.status, entry.enteredAt])];
+    const rows = [["rank", "name", "email", "status", "seat", "enteredAt"], ...allEntries.map((entry) => [String(entry.rank ?? ""), entry.user.name, entry.user.email, entry.status, entry.seat?.label ?? "", entry.enteredAt])];
     const text = rows.map((row) => row.map((cell) => `"${cell.replaceAll('"', '""')}"`).join(",")).join("\n");
     const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([text], { type: "text/csv" })); link.download = `fair-drop-${selected}-entries.csv`; link.click(); URL.revokeObjectURL(link.href);
   };
@@ -153,7 +153,7 @@ export function OrganizerDashboard() {
           {active ? <div className="selected-drop">
             <div className="selected-drop-top"><span className={`status-pill status-${active.status.toLowerCase()}`}>{statusLabel(active.status)}</span><span>{formatDate(active.eventDate)}</span></div>
             <small>{active.venue}</small>
-            <div className="chip-row"><span className="chip">{active.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</span><span className={`chip ${active.limitsEnabled ? "chip-on" : "chip-off"}`}>Limits {active.limitsEnabled ? "on" : "off"}</span><span className="chip">{active.reservationMinutes} min hold</span></div>
+            <div className="chip-row"><span className="chip">{active.allocationPolicy === "RANDOM_DRAW" ? "Random draw" : "First come"}</span><span className={`chip ${active.limitsEnabled ? "chip-on" : "chip-off"}`}>Limits {active.limitsEnabled ? "on" : "off"}</span><span className="chip">{active.reservationMinutes} min hold</span>{active.seatMap && <span className="chip chip-on">Seat map</span>}</div>
             {active.allocationPolicy === "RANDOM_DRAW" && <div className="commitment-row">
               <Fingerprint size={14} />
               <span>{active.drawSeedHash ? <>Draw sealed · <code title={active.drawSeedHash}>{active.drawSeedHash.slice(0, 10)}…{active.drawSeedHash.slice(-6)}</code></> : "Seed is committed when entry opens"}</span>
@@ -188,7 +188,7 @@ export function OrganizerDashboard() {
 
     <section className="table-panel glass">
       <div className="dash-section-head"><div><span className="section-kicker">THE ENTRY LIST</span><h2>Participants by draw rank</h2></div><span className="table-count">{total.toLocaleString()} total</span></div>
-      {entries.length ? <div className="table-scroll"><table><thead><tr><th>DRAW RANK</th><th>PARTICIPANT</th><th>EMAIL</th><th>STATUS</th><th>ENTRY RECEIVED</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id}><td>{entry.rank ? <span className="rank-chip">#{entry.rank}</span> : "—"}</td><td><span className="table-avatar">{entry.user.name.slice(0, 1).toUpperCase()}</span>{entry.user.name}</td><td className="email-cell">{entry.user.email}</td><td><span className={`receipt-status receipt-${entry.status.toLowerCase()}`}><span className="status-dot" />{statusLabel(entry.status)}</span></td><td>{formatDate(entry.enteredAt)}</td></tr>)}</tbody></table></div>
+      {entries.length ? <div className="table-scroll"><table><thead><tr><th>DRAW RANK</th><th>PARTICIPANT</th><th>EMAIL</th><th>STATUS</th>{active?.seatMap && <th>SEAT</th>}<th>ENTRY RECEIVED</th></tr></thead><tbody>{entries.map((entry) => <tr key={entry.id}><td>{entry.rank ? <span className="rank-chip">#{entry.rank}</span> : "—"}</td><td><span className="table-avatar">{entry.user.name.slice(0, 1).toUpperCase()}</span>{entry.user.name}</td><td className="email-cell">{entry.user.email}</td><td><span className={`receipt-status receipt-${entry.status.toLowerCase()}`}><span className="status-dot" />{statusLabel(entry.status)}</span></td>{active?.seatMap && <td>{entry.seat ? <span className="rank-chip">{entry.seat.label}</span> : "—"}</td>}<td>{formatDate(entry.enteredAt)}</td></tr>)}</tbody></table></div>
         : <div className="table-empty"><Users size={20} /><span>Entries will appear here as people join.</span></div>}
       {total > entries.length && <p className="table-limit-note">Showing the first {entries.length} entries. Export CSV downloads the full entry list.</p>}
     </section>
@@ -204,6 +204,7 @@ export function OrganizerDashboard() {
         <div className="field-row"><label className="field-label">Event date<input className="plain-input" name="eventDate" type="datetime-local" defaultValue={localDateTimeValue(new Date(Date.now() + 7 * 86400000))} required /></label><label className="field-label">Hold time (min)<input className="plain-input" name="reservationMinutes" type="number" min={1} max={120} defaultValue={10} required /></label></div>
         <label className="field-label">Seat allocation<span className="select-wrap"><select name="allocationPolicy" defaultValue="RANDOM_DRAW"><option value="RANDOM_DRAW">Protected random draw</option><option value="FIRST_COME">First come, first served</option></select><ChevronDown size={15} /></span></label>
         <label className="limit-toggle"><input type="checkbox" name="limitsEnabled" defaultChecked /><span className="toggle-mark"><Check size={12} /></span><span><strong>Enable abuse limits</strong><small>Apply account and source budgets to entry requests.</small></span></label>
+        <label className="limit-toggle"><input type="checkbox" name="seatMap" /><span className="toggle-mark"><Check size={12} /></span><span><strong>Let winners pick their seat</strong><small>Rows of 20 seats (A1, A2…). Up to 1,000 seats. Two winners can never book the same seat.</small></span></label>
         <button className="button button-primary full-button" disabled={busy}>{busy ? "Creating…" : "Create draft drop"}<ArrowRight size={15} /></button>
       </form>
     </div>}

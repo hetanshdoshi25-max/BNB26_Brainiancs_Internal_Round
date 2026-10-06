@@ -71,8 +71,10 @@ model Drop {
   drawSeedHash       String?
   drawSeed           String?
   drawCommittedAt    DateTime?
+  seatMap            Boolean    @default(false)
   createdAt          DateTime   @default(now())
   entries            Entry[]
+  seats              Seat[]
 
   @@index([status, closesAt])
 }
@@ -91,10 +93,28 @@ model Entry {
   humanScore           Int?
   drop                 Drop        @relation(fields: [dropId], references: [id], onDelete: Cascade)
   user                 User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  seat                 Seat?
 
   @@unique([dropId, userId])
   @@unique([dropId, rank])
   @@index([dropId, status, rank])
   @@index([dropId, status, arrivalSequence])
   @@index([status, reservationExpiresAt])
+}
+
+// A specific seat for drops with seat selection. A seat is taken while entryId is set:
+// held while that entry is RESERVED, booked once it is CONFIRMED. entryId is unique,
+// so an entry holds at most one seat, and (dropId, label) is unique, so a seat exists once.
+model Seat {
+  id      String  @id @default(cuid())
+  dropId  String
+  label   String
+  row     String
+  number  Int
+  entryId String? @unique
+  drop    Drop    @relation(fields: [dropId], references: [id], onDelete: Cascade)
+  entry   Entry?  @relation(fields: [entryId], references: [id], onDelete: SetNull)
+
+  @@unique([dropId, label])
+  @@index([dropId])
 }

@@ -15,6 +15,7 @@ import { hashToken, requireOrganizer, requireUser, SESSION_COOKIE, startSession 
 import { fairnessReport, newDrawSeed, recordJoinAttempt, seededShuffle, trafficSeries } from "./fairness";
 import { currentDifficulty, issueChallenge, powEnabled, verifyProof, type PowAction } from "./pow";
 import { humanScore } from "./signals";
+import { MAX_SEAT_MAP, moveEntryToSeat, releaseExpiredSeats, SEATS_PER_ROW, SeatTakenError, seatLayout, seatMapFor } from "./seats";
 
 const app = express();
 const port = Number(process.env.API_PORT ?? process.env.PORT ?? 4000);
@@ -34,9 +35,14 @@ function asyncRoute(handler: (req: Request, res: Response, next: NextFunction) =
 
 function clientIp(req: Request) { return req.ip || req.socket.remoteAddress || "unknown"; }
 
+// Per-account token buckets: [capacity, refill one token every N ms]. Seat picking is
+// generous because a winner may try several seats that others grab first.
+const ACCOUNT_BUDGETS: Record<string, [number, number]> = { join: [3, 60_000], seat: [30, 2_000] };
+
 async function budgetOr429(req: Request, res: Response, action: string, accountId?: string) {
+  const [accountCapacity, accountRefillMs] = ACCOUNT_BUDGETS[action] ?? [12, 10_000];
   const accountBudget = accountId
-    ? await enforceBudget([`${action}:user:${accountId}`], action === "join" ? 3 : 12, action === "join" ? 60_000 : 10_000)
+    ? await enforceBudget([`${action}:user:${accountId}`], accountCapacity, accountRefillMs)
     : { allowed: true, retryAfterMs: 0 };
   const ipCapacity = action === "join"
     ? Number(process.env.JOIN_IP_CAPACITY ?? 5000)
@@ -127,7 +133,7 @@ app.get("/api/auth/me", requireUser, (req, res) => res.json({ user: req.user }))
 const dropSummary = {
   id: true, title: true, description: true, venue: true, eventDate: true,
   capacity: true, allocationPolicy: true, limitsEnabled: true, status: true, opensAt: true, closesAt: true,
-  reservationMinutes: true, drawCompletedAt: true, createdAt: true, drawSeedHash: true, drawCommittedAt: true,
+  reservationMinutes: true, drawCompletedAt: true, createdAt: true, drawSeedHash: true, drawCommittedAt: true, seatMap: true,
 } as const;
 
 app.get("/api/drops", asyncRoute(async (_req, res) => {
@@ -148,7 +154,7 @@ app.get("/api/drops/:dropId", asyncRoute(async (req, res) => {
 app.get("/api/drops/:dropId/my-entry", requireUser, asyncRoute(async (req, res) => {
   const entry = await prisma.entry.findUnique({
     where: { dropId_userId: { dropId: req.params.dropId, userId: req.user!.id } },
-    select: { id: true, status: true, rank: true, enteredAt: true, reservationExpiresAt: true, confirmedAt: true, ticketCode: true },
+    select: { id: true, status: true, rank: true, enteredAt: true, reservationExpiresAt: true, confirmedAt: true, ticketCode: true, seat: { select: { label: true } } },
   });
   res.json({ entry });
 }));
@@ -261,6 +267,8 @@ async function promoteWaitlist(dropId: string) {
       where: { dropId, status: "RESERVED", reservationExpiresAt: { lte: now } },
       data: { status: "EXPIRED", reservationExpiresAt: null },
     });
+    // Seats picked by expired holds go back on the seat map.
+    if (drop.seatMap) await releaseExpiredSeats(tx, dropId);
     // Refill every free seat, not just one: several holds can expire in the same tick.
     const held = await tx.entry.count({ where: { dropId, status: { in: ["RESERVED", "CONFIRMED"] } } });
     const freeSeats = drop.capacity - held;
@@ -285,12 +293,17 @@ const createDropSchema = z.object({
   reservationMinutes: z.number().int().min(1).max(120).default(10),
   allocationPolicy: z.enum(["FIRST_COME", "RANDOM_DRAW"]).default("RANDOM_DRAW"),
   limitsEnabled: z.boolean().default(true),
-});
+  seatMap: z.boolean().default(false),
+}).refine((drop) => !drop.seatMap || drop.capacity <= MAX_SEAT_MAP, { message: `Seat selection supports up to ${MAX_SEAT_MAP.toLocaleString()} seats.` });
 
 app.post("/api/organizer/drops", requireUser, requireOrganizer, asyncRoute(async (req, res) => {
   const parsed = createDropSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Check the drop details." });
-  const drop = await prisma.drop.create({ data: parsed.data });
+  const drop = await prisma.$transaction(async (tx) => {
+    const created = await tx.drop.create({ data: parsed.data });
+    if (created.seatMap) await tx.seat.createMany({ data: seatLayout(created.capacity).map((seat) => ({ ...seat, dropId: created.id })) });
+    return created;
+  });
   res.status(201).json({ drop });
 }));
 
@@ -337,7 +350,7 @@ app.get("/api/organizer/drops/:dropId/entries", requireUser, requireOrganizer, a
   const entries = await prisma.entry.findMany({
     where: { dropId: req.params.dropId }, orderBy: [{ rank: "asc" }, { enteredAt: "asc" }],
     skip: (page - 1) * take, take,
-    select: { id: true, status: true, rank: true, enteredAt: true, reservationExpiresAt: true, confirmedAt: true, user: { select: { email: true, name: true } } },
+    select: { id: true, status: true, rank: true, enteredAt: true, reservationExpiresAt: true, confirmedAt: true, user: { select: { email: true, name: true } }, seat: { select: { label: true } } },
   });
   const total = await prisma.entry.count({ where: { dropId: req.params.dropId } });
   res.json({ entries, page, pages: Math.ceil(total / take), total });
@@ -355,7 +368,12 @@ app.post("/api/drops/:dropId/confirm", requireUser, asyncRoute(async (req, res) 
     if (entry.status !== "RESERVED") return { code: 409 as const, error: entry.status === "WAITLISTED" ? "You are on the waitlist. Check back for a reservation." : "There is no active reservation to confirm." };
     if (!entry.reservationExpiresAt || entry.reservationExpiresAt <= new Date()) {
       await tx.entry.update({ where: { id: entry.id }, data: { status: "EXPIRED", reservationExpiresAt: null } });
+      await tx.seat.updateMany({ where: { entryId: entry.id }, data: { entryId: null } });
       return { code: 409 as const, error: "This reservation expired. The next eligible waitlisted entry will be promoted." };
+    }
+    const drop = await tx.drop.findUnique({ where: { id: entry.dropId }, select: { seatMap: true } });
+    if (drop?.seatMap && !(await tx.seat.findUnique({ where: { entryId: entry.id }, select: { id: true } }))) {
+      return { code: 409 as const, error: "Pick your seat before confirming." };
     }
     const confirmed = await tx.entry.update({ where: { id: entry.id }, data: { status: "CONFIRMED", confirmedAt: new Date(), ticketCode: `FD-${randomUUID().toUpperCase()}` } });
     return { entry: confirmed };
@@ -374,6 +392,43 @@ app.get("/api/organizer/overview", requireUser, requireOrganizer, asyncRoute(asy
     redis.get("metrics:throttled"),
   ]);
   res.json({ drops, accounts, entries, confirmed, throttled: Number(throttled ?? 0) });
+}));
+
+// Seat selection: the seat map as the signed-in participant sees it.
+app.get("/api/drops/:dropId/seats", requireUser, asyncRoute(async (req, res) => {
+  const drop = await prisma.drop.findUnique({ where: { id: req.params.dropId }, select: { seatMap: true } });
+  if (!drop) return res.status(404).json({ error: "Drop not found." });
+  if (!drop.seatMap) return res.status(409).json({ error: "This drop doesn’t use seat selection." });
+  const mine = await prisma.entry.findUnique({ where: { dropId_userId: { dropId: req.params.dropId, userId: req.user!.id } }, select: { id: true } });
+  res.setHeader("Cache-Control", "no-store");
+  res.json({ seatsPerRow: SEATS_PER_ROW, seats: await seatMapFor(req.params.dropId, mine?.id ?? null) });
+}));
+
+// Pick (or switch to) a seat. Only winners with an active reservation can hold a seat;
+// the hold lasts as long as their reservation and becomes a booking when they confirm.
+app.post("/api/drops/:dropId/seats/:label", requireUser, asyncRoute(async (req, res) => {
+  if (!(await budgetOr429(req, res, "seat", req.user!.id))) return;
+  const label = String(req.params.label).toUpperCase();
+  if (!/^[A-Z]{1,3}\d{1,3}$/.test(label)) return res.status(400).json({ error: "Unknown seat." });
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const drop = await tx.drop.findUnique({ where: { id: req.params.dropId }, select: { seatMap: true } });
+      if (!drop?.seatMap) return { code: 409 as const, error: "This drop doesn’t use seat selection." };
+      const entry = await tx.entry.findUnique({ where: { dropId_userId: { dropId: req.params.dropId, userId: req.user!.id } } });
+      if (!entry || entry.status !== "RESERVED" || !entry.reservationExpiresAt || entry.reservationExpiresAt <= new Date()) {
+        return { code: 409 as const, error: entry?.status === "CONFIRMED" ? "Your ticket is already confirmed." : "Only entries with an active seat reservation can pick a seat." };
+      }
+      const seat = await tx.seat.findUnique({ where: { dropId_label: { dropId: req.params.dropId, label } }, select: { id: true } });
+      if (!seat) return { code: 404 as const, error: "Unknown seat." };
+      await moveEntryToSeat(tx, req.params.dropId, entry.id, label);
+      return { seat: label, holdUntil: entry.reservationExpiresAt };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    if ("error" in result) return res.status(result.code ?? 409).json({ error: result.error });
+    return res.json(result);
+  } catch (error) {
+    if (error instanceof SeatTakenError) return res.status(409).json({ error: error.message, taken: true });
+    throw error;
+  }
 }));
 
 // Proof-of-work challenge. Entry to a drop without abuse limits (the baseline policy) needs none.

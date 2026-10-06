@@ -677,6 +677,41 @@ input[type="datetime-local"].plain-input { color-scheme: dark; }
 .traffic-dot { stroke: #120e30; stroke-width: 2; }
 .traffic-dot.line-accepted { fill: #3b82f6; } .traffic-dot.line-throttled { fill: #d97706; } .traffic-dot.line-rejected { fill: #ec4899; }
 
+/* ── Seat selection ── */
+.seat-backdrop { justify-content: center; align-items: center; padding: 20px; }
+.seat-modal { width: min(820px, 100%); max-height: calc(100vh - 40px); overflow: hidden; display: grid; grid-template-rows: auto auto auto auto minmax(0, 1fr) auto; gap: 12px; padding: 22px; background: linear-gradient(170deg, rgba(30, 22, 80, .95), rgba(8, 6, 26, .97)); animation: fadeIn .25s ease; }
+.seat-modal .panel-heading { margin-bottom: 0; }
+.seat-modal > .notice-banner, .seat-modal > .error-banner { margin-bottom: 0; }
+.seat-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 13px; font-weight: 600; }
+.seat-meta span { display: inline-flex; align-items: center; gap: 6px; }
+.seat-meta b { color: var(--ink); font-family: var(--mono); }
+.seat-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; font-weight: 700; color: #d4d0f0; }
+.seat-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.seat-dot { width: 13px; height: 11px; border-radius: 4px 4px 2px 2px; display: inline-block; border: 1.5px solid; }
+.seat-scroll { overflow: auto; border: 1px solid var(--line); border-radius: 16px; padding: 14px; background: rgba(5, 4, 20, .5); min-height: 180px; }
+.seat-stage { margin: 0 auto 16px; width: min(70%, 420px); text-align: center; padding: 6px; border-radius: 0 0 40px 40px; font-family: var(--mono); font-size: 10.5px; letter-spacing: .4em; color: #cffafe; background: linear-gradient(180deg, rgba(34, 211, 238, .35), rgba(34, 211, 238, .05)); box-shadow: 0 6px 30px -8px rgba(34, 211, 238, .8); }
+.seat-loading { color: var(--muted); text-align: center; padding: 20px; }
+.seat-grid { display: grid; gap: 5px; justify-content: center; width: max-content; margin: 0 auto; }
+.seat-row-line { display: flex; align-items: center; gap: 4px; }
+.seat-row-line > .seat:nth-child(11) { margin-left: 12px; }
+.seat-row-label { width: 22px; text-align: center; font-family: var(--mono); font-size: 10px; color: var(--dim); }
+.seat { width: 26px; height: 24px; border-radius: 7px 7px 3px 3px; border: 1.5px solid; font-size: 9.5px; font-weight: 700; font-family: var(--mono); display: grid; place-items: center; cursor: pointer; padding: 0; transition: transform .12s, box-shadow .12s, background .12s; }
+.seat-available, .seat-dot.seat-available { border-color: rgba(167, 139, 250, .7); background: rgba(124, 58, 237, .14); color: #ddd6fe; }
+.seat-available:not(:disabled):hover, .seat-available:focus-visible { transform: translateY(-2px); background: rgba(167, 139, 250, .4); box-shadow: 0 0 14px -2px rgba(167, 139, 250, .9); }
+.seat-mine, .seat-dot.seat-mine { border-color: var(--lime); background: var(--lime); color: #0b0926; box-shadow: 0 0 16px -2px rgba(163, 230, 53, .9); }
+.seat-held, .seat-dot.seat-held { border-color: rgba(251, 191, 36, .6); background: rgba(251, 191, 36, .16); color: rgba(253, 230, 138, .7); cursor: not-allowed; }
+.seat-booked, .seat-dot.seat-booked { border-color: rgba(255, 255, 255, .12); background: rgba(255, 255, 255, .05); color: rgba(255, 255, 255, .25); cursor: not-allowed; }
+.seat:disabled { cursor: not-allowed; }
+.seat.seat-mine:disabled { cursor: default; }
+.seat-pending { animation: stepPulse 1s infinite; --c: var(--violet); }
+.seat-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; color: var(--muted); font-weight: 600; }
+.seat-label-big { font-family: var(--display); font-size: 20px; color: var(--lime); margin-left: 6px; }
+.seat-chip-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(163, 230, 53, .3); background: rgba(163, 230, 53, .06); font-size: 13.5px; color: #e9e5ff; }
+.seat-chip-row > svg { color: var(--lime); flex-shrink: 0; }
+.seat-chip-row b { font-family: var(--mono); color: var(--lime); }
+.seat-chip-row span { flex: 1; }
+.seat-change { border: 0; background: none; cursor: pointer; padding: 0; }
+
 /* ── Responsive ── */
 @media (max-width: 1180px) {
 
